@@ -382,7 +382,10 @@ def macos_dependencies(app: Path, prefix: Path, original_app: Path) -> None:
         # 主程序没有 LC_ID_DYLIB；仅为真正的动态库更新标识。
         if identities:
             run([tool("install_name_tool"), "-id", f"@rpath/{binary.name}", binary])
-    for binary in sorted(visited, key=lambda path: len(path.parts), reverse=True):
+    # 签名 app 主程序会校验整个包，必须先完成所有嵌套库和插件的签名。
+    # 主程序与 Frameworks 内 dylib 的目录深度相同，不能仅按深度决定先后。
+    nested_binaries = visited - {app_executable.resolve()}
+    for binary in sorted(nested_binaries, key=lambda path: (-len(path.parts), str(path))):
         run([tool("codesign"), "--force", "--sign", "-", binary])
     for framework in sorted(frameworks.glob("*.framework")):
         run([tool("codesign"), "--force", "--sign", "-", framework])
