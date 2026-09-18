@@ -452,7 +452,7 @@ def archive(bundle: Path, output: Path, name: str, system: str) -> Path:
                 if path.is_file():
                     stream.write(path, Path("LogicAnalyzer") / path.relative_to(bundle))
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    target.with_name(target.name + ".sha256").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
+    target.with_name(target.name + ".sha256").write_bytes(f"{digest}  {target.name}\n".encode("utf-8"))
     return target
 
 

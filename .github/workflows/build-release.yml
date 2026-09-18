@@ -133,7 +133,10 @@ jobs:
             exit 1
           }
           cd release-assets
-          for checksum in *.sha256; do sha256sum --check "$checksum"; done
+          # 兼容 Windows 文本工具产生的 CRLF，避免把回车误当成文件名的一部分。
+          for checksum in *.sha256; do
+            tr -d '\r' < "$checksum" | sha256sum --check -
+          done
           cd ..
           flags=()
           [[ "$RELEASE_TAG" != *-* ]] || flags+=(--prerelease)

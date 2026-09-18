@@ -147,7 +147,7 @@ def main() -> None:
     if not target.is_file():
         raise RuntimeError(f"NSIS 未生成预期安装包：{target}")
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    target.with_name(target.name + ".sha256").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
+    target.with_name(target.name + ".sha256").write_bytes(f"{digest}  {target.name}\n".encode("utf-8"))
     print(f"已生成安装包：{target}", flush=True)
 
 
