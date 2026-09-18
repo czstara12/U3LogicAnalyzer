@@ -1,0 +1,142 @@
+name: 全平台构建与发布
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            os: windows-2022
+            shell: 'msys2 {0}'
+            artifact: windows-x86_64
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            shell: bash
+            artifact: linux-x86_64
+          - name: macOS arm64
+            os: macos-15
+            shell: bash
+            artifact: macos-arm64
+          - name: macOS x86_64
+            os: macos-15-intel
+            shell: bash
+            artifact: macos-x86_64
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      BUILD_JOBS: '2'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: 获取源码
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 准备 Windows 工具链
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-glibmm
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-hidapi
+            mingw-w64-x86_64-libzip
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-qt5-base
+            mingw-w64-x86_64-qt5-svg
+            mingw-w64-x86_64-qt5-tools
+
+      - name: 安装 Linux/macOS 依赖
+        if: runner.os != 'Windows'
+        run: bash setup_env.sh
+
+      - name: 编译、打包并验证独立启动
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$REF_TYPE" == tag ]]; then
+            version="$REF_NAME"
+          else
+            version="dev-${COMMIT_SHA:0:8}"
+          fi
+          bash build.sh --package --version "$version"
+
+      - name: 保存发布包与校验文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          path: |
+            dist/LogicAnalyzer-*.zip
+            dist/LogicAnalyzer-*.tar.gz
+            dist/LogicAnalyzer-*.sha256
+
+  release:
+    name: 发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: 获取发布说明
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: 下载全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: release-assets
+      - name: 发布版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || {
+            echo '版本标签应采用 v0.4.0 或 v0.4.0-rc.1 格式。' >&2
+            exit 1
+          }
+          cd release-assets
+          for checksum in *.sha256; do sha256sum --check "$checksum"; done
+          cd ..
+          flags=()
+          [[ "$RELEASE_TAG" != *-* ]] || flags+=(--prerelease)
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag --title "LogicAnalyzer $RELEASE_TAG" \
+            --notes-file docs/release-notes.md "${flags[@]}"
