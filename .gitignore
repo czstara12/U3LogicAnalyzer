@@ -1,0 +1,27 @@
+# 本机构建和分发产物
+/build*/
+/install*/
+/dist/
+/.tools/
+/.tmp/
+*.log
+__pycache__/
+*.py[cod]
+*.qm
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.user
+conf*.file
+# 历史源码内构建产物
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CPackConfig.cmake
+CPackSourceConfig.cmake
+CTestTestfile.cmake
+*.qrc.depends
+qrc_*.cpp
+*_autogen/

@@ -1,0 +1,217 @@
+/*
+ * This file is part of the LogicAnalyzer project.
+ * LogicAnalyzer is based on PulseView.
+ *
+ * Copyright (C) 2012 Joel Holdsworth <joel@airwebreathe.org.uk>
+ * Copyright (C) 2026 Q2H2
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <extdef.h>
+
+#include <cassert>
+#include <cmath>
+
+#include <QApplication>
+#include <QFormLayout>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QMenu>
+
+#include <libsigrokcxx/libsigrokcxx.hpp>
+
+#include "pv/data/signalbase.hpp"
+
+#include "signal.hpp"
+#include "view.hpp"
+
+using std::shared_ptr;
+
+namespace pv {
+namespace views {
+namespace trace {
+
+const char *const ChannelNames[] = {
+	"CLK",
+	"DATA",
+	"EN",
+	"IN",
+	"OUT",
+	"RST",
+	"TX",
+	"RX",
+	"SDA",
+	"SCL"
+	"SCLK",
+	"MOSI",
+	"MISO",
+	"/CS",
+	"nCS",
+	"/SS",
+	"nSS",
+	"/RST",
+	"nRST",
+};
+
+Signal::Signal(pv::Session &session,
+	shared_ptr<data::SignalBase> signal) :
+	Trace(signal),
+	session_(session),
+	name_widget_(nullptr)
+{
+	assert(base_);
+
+	connect(base_.get(), SIGNAL(enabled_changed(bool)),
+		this, SLOT(on_enabled_changed(bool)));
+}
+
+void Signal::set_name(QString name)
+{
+	base_->set_name(name);
+
+	if (name != name_widget_->currentText())
+		name_widget_->setEditText(name);
+}
+
+bool Signal::enabled() const
+{
+	return base_->enabled();
+}
+
+shared_ptr<data::SignalBase> Signal::base() const
+{
+	return base_;
+}
+
+void Signal::save_settings(QSettings &settings) const
+{
+	std::map<QString, QVariant> settings_map = save_settings();
+
+	for (auto& entry : settings_map)
+		settings.setValue(entry.first, entry.second);
+}
+
+std::map<QString, QVariant> Signal::save_settings() const
+{
+	return std::map<QString, QVariant>();
+}
+
+void Signal::restore_settings(QSettings &settings)
+{
+	std::map<QString, QVariant> settings_map;
+
+	QStringList keys = settings.allKeys();
+	for (int i = 0; i < keys.size(); i++)
+		settings_map[keys.at(i)] = settings.value(keys.at(i));
+
+	restore_settings(settings_map);
+}
+
+void Signal::restore_settings(std::map<QString, QVariant> settings)
+{
+	(void)settings;
+}
+
+
+void Signal::paint_back(QPainter &p, ViewItemPaintParams &pp)
+{
+	if (base_->enabled())
+		Trace::paint_back(p, pp);
+}
+
+void Signal::populate_popup_form(QWidget *parent, QFormLayout *form)
+{
+	name_widget_ = new QComboBox(parent);
+	name_widget_->setEditable(true);
+	name_widget_->setCompleter(nullptr);
+
+	for (unsigned int i = 0; i < countof(ChannelNames); i++)
+		name_widget_->insertItem(i, ChannelNames[i]);
+
+	const int index = name_widget_->findText(base_->name(), Qt::MatchExactly);
+
+	if (index == -1) {
+		name_widget_->insertItem(0, base_->name());
+		name_widget_->setCurrentIndex(0);
+	} else {
+		name_widget_->setCurrentIndex(index);
+	}
+
+	connect(name_widget_, SIGNAL(editTextChanged(const QString&)),
+		this, SLOT(on_nameedit_changed(const QString&)));
+
+	form->addRow(tr("Name"), name_widget_);
+
+	add_color_option(parent, form);
+}
+
+QMenu* Signal::create_header_context_menu(QWidget *parent)
+{
+	QMenu *const menu = Trace::create_header_context_menu(parent);
+
+	menu->addSeparator();
+
+	QString caption;
+
+	if (base_->is_generated())
+		caption = tr("Remove");
+	else
+		caption = tr("Disable");
+
+	QAction *const a = new QAction(caption, this);
+	a->setShortcuts(QKeySequence::Delete);
+	connect(a, SIGNAL(triggered()), this, SLOT(on_disable()));
+	menu->addAction(a);
+
+	return menu;
+}
+
+void Signal::delete_pressed()
+{
+	on_disable();
+}
+
+void Signal::on_name_changed(const QString &text)
+{
+	// On startup, this event is fired when a session restores signal
+	// names. However, the name widget hasn't yet been created.
+	if (!name_widget_)
+		return;
+
+	if (text != name_widget_->currentText())
+		name_widget_->setEditText(text);
+
+	Trace::on_name_changed(text);
+}
+
+void Signal::on_disable()
+{
+	// For generated signals, "disable" means "remove"
+	if (base_->is_generated())
+		session_.remove_generated_signal(base_);
+	else
+		base_->set_enabled(false);
+}
+
+void Signal::on_enabled_changed(bool enabled)
+{
+	(void)enabled;
+	if (owner_)
+		owner_->extents_changed(true, true);
+}
+
+} // namespace trace
+} // namespace views
+} // namespace pv

@@ -1,0 +1,259 @@
+-------------------------------------------------------------------------------
+HACKING
+-------------------------------------------------------------------------------
+
+Coding style
+------------
+
+This project is programmed using the Linux kernel coding style:
+
+  https://www.kernel.org/doc/html/latest/process/coding-style.html
+
+Please use the same style for any code contributions, thanks!
+
+
+Contributions
+-------------
+
+ - In order to contribute you should ideally clone the git repository and
+   let us know (preferably via IRC, or via the mailing list) from where to
+   pull/review your changes. You can use github.com, or any other public git
+   hosting site.
+
+ - Alternatively, patches can be sent to the development mailinglist at
+   sigrok-devel@lists.sourceforge.net (please subscribe to the list first).
+
+   https://lists.sourceforge.net/lists/listinfo/sigrok-devel
+
+
+Adding a new hardware driver
+----------------------------
+
+The simple, scripted way (recommended):
+---------------------------------------
+
+Use the 'new-driver' script from the sigrok-util repo:
+
+ $ git clone git://sigrok.org/sigrok-util
+ $ cd sigrok-util/source
+ $ ./new-driver "Tondaj SL-814"
+
+The example above generates a patch file against the current libsigrok
+development git tree which adds a simple "stub" driver for your device
+(the Tondaj SL-814 sound level meter in this case).
+
+You can apply it like this:
+
+ $ cd libsigrok
+ $ git am 0001-tondaj-sl-814-Initial-driver-skeleton.patch
+
+You can now edit the files in src/hardware/tondaj-sl-814 as needed
+and implement your driver based on the skeleton files there. That means your
+patch submission later will consist of at least two patches: the initial one
+adding the skeleton driver, and one or more additional patches that actually
+implement the respective driver code.
+
+
+The manual way:
+---------------
+
+This is a rough overview of what you need to do in order to add a new driver
+(using the Tondaj SL-814 device as example). It's basically what the
+'new-driver' script (see above) does for you:
+
+ - Makefile.am: Add to src_libdrivers_la_SOURCES under the HW_TONDAJ_SL_814
+   condition.
+ - configure.ac: Add an SR_DRIVER() call.
+ - src/drivers.c: Add a tondaj_sl_814_driver_info entry in two places.
+ - src/hardware/tondaj-sl-814/ directory: Add api.c, protocol.c, protocol.h.
+
+See existing drivers or the 'new-driver' output for the details.
+
+
+Random notes
+------------
+
+ - Don't do variable declarations in compound statements, only at the
+   beginning of a function.
+
+ - Generally avoid assigning values to variables at declaration time,
+   especially so for complex and/or run-time dependent values.
+
+ - Consistently use g_*malloc() / g_*malloc0(). Do not use standard
+   malloc()/calloc() if it can be avoided (sometimes other libs such
+   as libftdi can return malloc()'d memory, for example).
+
+ - Always properly match allocations with the proper *free() functions. If
+   glib's g_*malloc()/g_*malloc0() was used, use g_free() to free the
+   memory. Otherwise use standard free(). Never use the wrong function!
+
+ - We assume that "small" memory allocations (< 1MB) will always succeed.
+   Thus, it's fine to use g_malloc() or g_malloc0() for allocations of
+   simple/small structs and such (instead of using g_try_malloc()), and
+   there's no need to check the return value.
+
+   Do use g_try_malloc() or g_try_malloc0() for large (>= 1MB) allocations
+   and check the return value.
+
+ - You should never print any messages (neither to stdout nor stderr nor
+   elsewhere) "manually" via e.g. printf() or g_log() or similar functions.
+   Only sr_err()/sr_warn()/sr_info()/sr_dbg()/sr_spew() should be used.
+
+ - Use glib's gboolean / TRUE / FALSE for boolean types consistently.
+   Do not use <stdbool.h> and its true / false, and do not invent private
+   definitions for this either.
+
+ - Consistently use the same naming convention for #include guards in headers:
+   <PROJECTNAME>_<PATH_TO_FILE>_<FILE>
+   This ensures that all #include guards are always unique and consistent.
+   Example: LIBSIGROK_HARDWARE_MIC_985XX_PROTOCOL_H
+
+ - Consistently use the same naming convention for API functions:
+   <libprefix>_<groupname>_<action>().
+
+   Examples:
+     sr_log_loglevel_set(), sr_log_loglevel_get(), sr_log_handler_set(),
+     sr_log_handler_set_default(), and so on.
+   Or:
+     sr_session_new(), sr_session_destroy(), sr_session_load(), and so on.
+
+   Getter/setter function names should usually end with "_get" or "_set".
+   Functions creating new "objects" should end with "_new".
+   Functions destroying "objects" should end with "_destroy".
+   Functions adding or removing items (e.g. from lists) should end with
+   either "_add" or "_remove".
+   Functions operating on all items from a list (not on only one of them),
+   should end with "_all", e.g. "_remove_all", "_get_all", and so on.
+   Use "_remove_all" in favor of "_clear" for consistency.
+
+ - All enums should generally use an explicit start number of 10000.
+   If there are multiple "categories" in the enum entries, each category
+   should be 10000 entries apart from the next one. The start of categories
+   are thus 10000, 20000, 30000, and so on.
+
+   Adding items to an enum MUST always append to a "category", never add
+   items in the middle of a category. The order of items MUST NOT be changed.
+   Any of the above would break the ABI.
+
+   The enum item 0 is special and is used as terminator in some lists, thus
+   enums should not use this for "valid" entries (and start at 10000 instead).
+
+
+Doxygen
+-------
+
+ - Use the @ notation for all Doxygen comments (e.g. @param, not \param).
+
+ - Do not use the @brief tag, it's unnecessary as we use JAVADOC_AUTOBRIEF.
+
+ - Generally use the following item order in Doxygen comments:
+    - Brief function description (1 line), followed by an empty line.
+    - Optionally, a longer function description (and another empty line).
+    - The list of parameter descriptions (@param).
+    - The return value description (@return or @retval).
+    - An optional @since tag (only for public SR_API functions).
+    - An optional @private tag (for private SR_PRIV functions).
+
+ - In @param lines, the name of the parameter is followed by a space and
+   then a sentence describing the parameter (starts with a capital letter,
+   ends with a full stop).
+
+ - In Doxygen comments, put an empty line between the block of @param lines
+   and the final @return line. The @param lines themselves (if there is more
+   than one) are not separated by empty lines.
+
+ - Mark private functions (SR_PRIV) with /** @private */, so that Doxygen
+   doesn't include them in the output. Functions that are "static" anyway
+   don't need to be marked like this. Functions in non-public files that
+   are explicitly excluded in Doxyfile don't need to be marked either.
+   Don't use @internal, always use @private instead.
+
+ - Mark private variables/#defines with /** @cond PRIVATE */ and
+   /** @endcond */, so that Doxygen doesn't include them in the output.
+   Variables that are "static" don't need to be marked like this.
+
+ - Mark all public API functions (SR_API) with a @since tag which indicates
+   in which release the respective function was added (e.g. "@since 0.1.0").
+
+   If the function has existed before, but its API changed later, the @since
+   tag should mention only the release when the API last changed.
+
+   Example: The sr_foo() call was added in 0.1.0, but the API changed in
+   the later 0.2.0 release. The docs should read "@since 0.2.0" in that case.
+
+   Non-public functions (static ones, and those marked SR_PRIV) don't need
+   to have @since markers.
+
+   The @since tag should be the last one, i.e. it should come after @param,
+   @return, @see, and so on.
+
+ - Examples:
+
+/**
+ * Tell a hardware driver to scan for devices.
+ *
+ * In addition to the detection, the devices that are found are also
+ * initialized automatically. On some devices, this involves a firmware upload,
+ * or other such measures.
+ *
+ * The order in which the system is scanned for devices is not specified. The
+ * caller should not assume or rely on any specific order.
+ *
+ * Before calling sr_driver_scan(), the user must have previously initialized
+ * the driver by calling sr_driver_init().
+ *
+ * @param[in] driver The driver that should scan. Must be a pointer to one of
+ *                   the entries returned by sr_driver_list(). Must not be NULL.
+ * @param[in] options List of 'struct sr_hwopt' options to pass to the driver's
+ *                    scanner. Can be NULL/empty.
+ *
+ * @return A GSList * of 'struct sr_dev_inst', or NULL if no devices were
+ *         found (or errors were encountered). This list must be freed by the
+ *         caller using g_slist_free(), but without freeing the data pointed
+ *         to in the list.
+ *
+ * @since 0.2.0
+ */
+
+/**
+ * Query value of a configuration key at the given driver or device instance.
+ *
+ * @param[in] driver The sr_dev_driver struct to query. Must not be NULL.
+ * @param[in] sdi (optional) If the key is specific to a device, this must
+ *            contain a pointer to the struct sr_dev_inst to be checked.
+ *            Otherwise it must be NULL. If sdi is != NULL, sdi->priv must
+ *            also be != NULL.
+ * @param[in,out] data Pointer to a GVariant where the value will be stored.
+ *             Must not be NULL. The caller is given ownership of the GVariant
+ *             and must thus decrease the refcount after use. However if
+ *             this function returns an error code, the field should be
+ *             considered unused, and should not be unreferenced.
+ *
+ * @retval SR_OK Success.
+ * @retval SR_ERR Error.
+ * @retval SR_ERR_ARG The driver doesn't know that key, but this is not to be
+ *         interpreted as an error by the caller; merely as an indication
+ *         that it's not applicable.
+ *
+ * @since 0.3.0
+ * @private
+ */
+
+
+Testsuite
+---------
+
+You can run the libsigrok testsuite using:
+
+ $ make check
+
+
+Release engineering
+-------------------
+
+See
+
+ http://sigrok.org/wiki/Developers/Release_process
+
+for a list of items that need to be done when releasing a new tarball.
+

@@ -1,0 +1,527 @@
+/*
+ * This file is part of the LogicAnalyzer project.
+ * LogicAnaylzer is based on Pulseview.
+ *
+ * Copyright (C) 2013 Joel Holdsworth <joel@airwebreathe.org.uk>
+ * Copyright (C) 2026 Q2H2
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <extdef.h>
+
+#include <cassert>
+#include <cmath>
+
+#include <QApplication>
+#include <QFormLayout>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QMenu>
+
+#include "ruler.hpp"
+#include "trace.hpp"
+#include "tracepalette.hpp"
+#include "view.hpp"
+#include <QColor>
+#include "pv/globalsettings.hpp"
+#include "pv/widgets/colorbutton.hpp"
+#include "pv/widgets/popup.hpp"
+QPoint pos_;
+
+QColor dark(Qt::white);
+QColor bright(Qt::black);
+using std::pair;
+using std::shared_ptr;
+
+namespace pv {
+namespace views {
+namespace trace {
+
+const QPen Trace::AxisPen(QColor(0, 0, 0, 30 * 256 / 100));
+const int Trace::LabelHitPadding = 2;
+
+const QColor Trace::BrightGrayBGColor = QColor(0, 0, 0, 10 * 255 / 100);
+const QColor Trace::DarkGrayBGColor = QColor(0, 0, 0, 15 * 255 / 100);
+const QColor Trace::ErrorBgColor = QColor(0xEF, 0x29, 0x29);
+
+Trace::Trace(shared_ptr<data::SignalBase> signal) :
+	base_(signal),
+	axis_pen_(AxisPen),
+	segment_display_mode_(ShowLastSegmentOnly),  // Will be overwritten by View
+	current_segment_(0),
+	popup_(nullptr),
+	popup_form_(nullptr)
+{
+	connect(signal.get(), SIGNAL(name_changed(const QString&)),
+		this, SLOT(on_name_changed(const QString&)));
+	connect(signal.get(), SIGNAL(color_changed(const QColor&)),
+		this, SLOT(on_color_changed(const QColor&)));
+	connect(signal.get(), SIGNAL(error_message_changed(const QString&)),
+		this, SLOT(on_error_message_changed(const QString&)));
+
+	GlobalSettings::add_change_handler(this);
+
+	GlobalSettings settings;
+	show_hover_marker_ =
+		settings.value(GlobalSettings::Key_View_ShowHoverMarker).toBool();
+}
+
+Trace::~Trace()
+{
+	GlobalSettings::remove_change_handler(this);
+}
+
+shared_ptr<data::SignalBase> Trace::base() const
+{
+	return base_;
+}
+
+bool Trace::is_selectable(QPoint pos) const
+{
+	// True if the header was clicked, false if the trace area was clicked
+	const View *view = owner_->view();
+	assert(view);
+
+	return (pos.x() <= view->header_width());
+}
+
+bool Trace::is_draggable(QPoint pos) const
+{
+	// While the header label that belongs to this trace is draggable,
+	// the trace itself shall not be. Hence we return true if the header
+	// was clicked and false if the trace area was clicked
+	const View *view = owner_->view();
+	assert(view);
+
+	return (pos.x() <= view->header_width());
+}
+
+void Trace::set_segment_display_mode(SegmentDisplayMode mode)
+{
+	segment_display_mode_ = mode;
+
+	if (owner_)
+		owner_->row_item_appearance_changed(true, true);
+}
+
+void Trace::on_setting_changed(const QString &key, const QVariant &value)
+{
+	if (key == GlobalSettings::Key_View_ShowHoverMarker)
+		show_hover_marker_ = value.toBool();
+
+	// Force a repaint since many options alter the way traces look
+	if (owner_)
+		owner_->row_item_appearance_changed(false, true);
+}
+
+void Trace::paint_label(QPainter &p, const QRect &rect, bool hover)
+{
+	int y = get_visual_y();
+	p.setBrush(base_->color());
+	QPointF Point;
+	if (!enabled())
+		return;
+
+	QRectF r = label_rect(rect);
+	if (base_->type() == base_->LogicChannel){
+		const pair<int, int> extents = v_extents();
+		const int top = get_visual_y() + extents.first;
+		const int btm = get_visual_y() + extents.second;
+		y = top + ((btm - top) / 2.0);
+	}
+	// When selected, move the arrow to the left so that the border can show
+	const QPointF offs = (selected()) ? QPointF(-2, 0) : QPointF(0, 0);
+
+	// Paint the label
+	const float label_arrow_length = r.height() / 2;
+	QPointF points[] = {
+		offs + r.topLeft(),
+		offs + QPointF(r.right() - label_arrow_length, r.top()),
+		offs + QPointF(r.right(), y),
+		offs + QPointF(r.right() - label_arrow_length, r.bottom()),
+		offs + r.bottomLeft()
+	};
+	QPointF highlight_points[] = {
+		offs + QPointF(r.left() + 1, r.top() + 1),
+		offs + QPointF(r.right() - label_arrow_length, r.top() + 1),
+		offs + QPointF(r.right() - 1, y),
+		offs + QPointF(r.right() - label_arrow_length, r.bottom() - 1),
+		offs + QPointF(r.left() + 1, r.bottom() - 1)
+	};
+
+	if (selected()) {
+		p.setPen(highlight_pen());
+		p.setBrush(Qt::transparent);
+		p.drawPolygon(points, countof(points));
+	}
+
+	p.setPen(Qt::transparent);
+	p.setBrush(hover ? base_->color().lighter() : base_->color());
+	p.drawPolygon(points, countof(points));
+
+	p.setPen(base_->color().lighter());
+	p.setBrush(Qt::transparent);
+	p.drawPolygon(highlight_points, countof(highlight_points));
+
+	p.setPen(base_->color().darker());
+	p.setBrush(Qt::transparent);
+	p.drawPolygon(points, countof(points));
+
+	// Paint the text
+	p.setPen(select_text_color(base_->color()));
+	p.setFont(QApplication::font());
+	p.drawText(QRectF(r.x(), r.y(),
+		r.width() - label_arrow_length, r.height()),
+		Qt::AlignCenter | Qt::AlignVCenter, base_->name());
+}
+
+void Trace::paint_error(QPainter &p, const ViewItemPaintParams &pp)
+{
+	const QString message = base_->get_error_message();
+
+	const int y = get_visual_y();
+
+	p.setPen(ErrorBgColor.darker());
+	p.setBrush(ErrorBgColor);
+
+	const QRectF bounding_rect = QRectF(pp.left(), INT_MIN / 2 + y, pp.right(), INT_MAX);
+
+	const QRectF text_rect = p.boundingRect(bounding_rect, Qt::AlignCenter, message);
+	const qreal r = text_rect.height() / 4;
+
+	p.drawRoundedRect(text_rect.adjusted(-r, -r, r, r), r, r, Qt::AbsoluteSize);
+
+	p.setPen(Qt::black);
+	p.drawText(text_rect, message);
+}
+
+QMenu* Trace::create_header_context_menu(QWidget *parent)
+{
+	QMenu *const menu = ViewItem::create_header_context_menu(parent);
+
+	return menu;
+}
+
+QMenu* Trace::create_view_context_menu(QWidget *parent, QPoint &click_pos)
+{
+	context_menu_x_pos_ = click_pos.x();
+	context_menu_y_pos_ = click_pos.y();
+	// Get entries from default menu before adding our own
+	QMenu *const menu = new QMenu(parent);
+
+	QMenu* default_menu = TraceTreeItem::create_view_context_menu(parent, click_pos);
+	if (default_menu) {
+		for (QAction *action : default_menu->actions()) {  // clazy:exclude=range-loop
+			menu->addAction(action);
+			if (action->parent() == default_menu)
+				action->setParent(menu);
+		}
+		delete default_menu;
+
+		// Add separator if needed
+		if (menu->actions().length() > 0)
+			menu->addSeparator();
+	}
+	
+	QAction *const create_marker_here = new QAction(tr("Create marker here"), this);
+	connect(create_marker_here, SIGNAL(triggered()), this, SLOT(on_create_marker_here()));
+	menu->addAction(create_marker_here);
+	
+	// QAction *const create_measure_here = new QAction(tr("Create measure here"), this);
+	// connect(create_measure_here, SIGNAL(triggered()), this, SLOT(on_create_measure_here()));
+	// menu->addAction(create_measure_here);
+
+	return menu;
+}
+
+void Trace::close_popup()
+{
+	popup_->close();
+}
+
+pv::widgets::Popup* Trace::create_popup(QWidget *parent)
+{
+	using pv::widgets::Popup;
+
+	popup_ = new Popup(parent);
+	popup_->set_position(parent->mapToGlobal(
+		drag_point(parent->rect())), Popup::Right);
+
+	create_popup_form();
+
+	connect(popup_, SIGNAL(closed()), this, SLOT(on_popup_closed()));
+
+	return popup_;
+}
+
+QRectF Trace::label_rect(const QRectF &rect) const
+{
+	QFontMetrics m(QApplication::font());
+	const QSize text_size(
+		m.boundingRect(QRect(), 0, base_->name()).width(), m.height());
+	QSizeF label_size(
+		text_size.width() + LabelPadding.width() * 2,
+		ceilf((text_size.height() + LabelPadding.height() * 2) / 2) * 2);
+	label_size.setWidth(label_size.width() + 5);
+	label_size.setHeight(label_size.height() + 6);
+
+	const float half_height = label_size.height() / 2;
+	QRectF r = QRectF(
+		rect.right() - half_height - label_size.width() - 0.5,
+		get_visual_y() /*+ 0.5f*/ - half_height - 3,
+		label_size.width() + half_height,
+		label_size.height());
+	if (base_->type() == base_->LogicChannel){
+		const pair<int, int> extents = v_extents();
+		const float signal_center_y = get_visual_y() + (extents.first + extents.second) / 2.0;
+		r.moveCenter(QPointF(r.center().x(), signal_center_y));
+	}
+	return r;
+}
+
+QRectF Trace::hit_box_rect(const ViewItemPaintParams &pp) const
+{
+	// This one is only for the trace itself, excluding the header area
+	const View *view = owner_->view();
+	assert(view);
+
+	pair<int, int> extents = v_extents();
+	const int top = pp.top() + get_visual_y() + extents.first;
+	const int height = extents.second - extents.first;
+
+	return QRectF(pp.left() + view->header_width(), top,
+		pp.width() - view->header_width(), height);
+}
+
+void Trace::set_current_segment(const int segment)
+{
+	current_segment_ = segment;
+}
+
+int Trace::get_current_segment() const
+{
+	return current_segment_;
+}
+
+void Trace::hover_point_changed(const QPoint &hp)
+{
+	(void)hp;
+
+	if (owner_)
+		owner_->row_item_appearance_changed(false, true);
+}
+
+void Trace::paint_back(QPainter &p, ViewItemPaintParams &pp)
+{
+	if (base_->type() == base_->LogicChannel) {
+		GlobalSettings settings;
+		QPen pen;
+		pen.setStyle(Qt::DashLine);
+
+		if (settings.current_theme_is_dark()){
+			dark.setAlpha(100);
+			pen.setColor(dark);
+		}
+		else{
+			bright.setAlpha(100);
+			pen.setColor(bright);
+		}
+
+		p.setPen(pen);
+		const pair<int, int> extents = v_extents();
+		const int top = get_visual_y() + extents.first;
+		const int btm = get_visual_y() + extents.second;
+		float y = top + ((btm - top) / 2.0);
+		p.drawLine(pp.left(), y, pp.right(), y);
+	} else{
+		const View *view = owner_->view();
+		assert(view);
+		if (view->colored_bg())
+			p.setBrush(base_->bgcolor());
+		else
+			p.setBrush(pp.next_bg_color_state() ? BrightGrayBGColor : DarkGrayBGColor);
+		p.setPen(QPen(Qt::NoPen));
+		const pair<int, int> extents = v_extents();
+		p.drawRect(pp.left(), get_visual_y() + extents.first,
+		pp.width(), extents.second - extents.first);
+	}
+}
+
+void Trace::paint_axis(QPainter &p, ViewItemPaintParams &pp, int y)
+{
+	bool was_antialiased = p.testRenderHint(QPainter::Antialiasing);
+	p.setRenderHint(QPainter::Antialiasing, false);
+
+	p.setPen(axis_pen_);
+	p.drawLine(QPointF(pp.left(), y), QPointF(pp.right(), y));
+
+	p.setRenderHint(QPainter::Antialiasing, was_antialiased);
+}
+
+void Trace::add_color_option(QWidget *parent, QFormLayout *form)
+{
+	using pv::widgets::ColorButton;
+
+	ColorButton *const color_button = new ColorButton(
+		TracePalette::Rows, TracePalette::Cols, parent);
+	color_button->set_palette(TracePalette::Colors);
+	color_button->set_color(base_->color());
+	connect(color_button, SIGNAL(selected(const QColor&)),
+		this, SLOT(on_coloredit_changed(const QColor&)));
+
+	form->addRow(tr("Color"), color_button);
+}
+
+void Trace::paint_hover_marker(QPainter &p)
+{
+	const View *view = owner_->view();
+	assert(view);
+
+	const int x = view->hover_point().x();
+
+	if (x == -1)
+		return;
+
+	p.setPen(QPen(QColor(Qt::lightGray)));
+
+	const pair<int, int> extents = v_extents();
+
+	bool was_antialiased = p.testRenderHint(QPainter::Antialiasing);
+	p.setRenderHint(QPainter::Antialiasing, false);
+	p.drawLine(x, get_visual_y() + extents.first,
+		x, get_visual_y() + extents.second);
+	p.setRenderHint(QPainter::Antialiasing, was_antialiased);
+}
+
+void Trace::create_popup_form()
+{
+	// Clear the layout
+
+	// Transfer the layout and the child widgets to a temporary widget
+	// which we delete after the event was handled. This way, the layout
+	// and all widgets contained therein are deleted after the event was
+	// handled, leaving the parent popup_ time to handle the change.
+	if (popup_form_) {
+		QWidget *suicidal = new QWidget();
+		suicidal->setLayout(popup_->layout());
+		suicidal->deleteLater();
+	}
+
+	// Repopulate the popup
+	widgets::QWidthAdjustingScrollArea* scrollarea = new widgets::QWidthAdjustingScrollArea();
+	QWidget* scrollarea_content = new QWidget(scrollarea);
+
+	scrollarea->setWidget(scrollarea_content);
+	scrollarea->setWidgetResizable(true);
+	scrollarea->setContentsMargins(0, 0, 0, 0);
+	scrollarea->setFrameShape(QFrame::NoFrame);
+	scrollarea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	scrollarea_content->setContentsMargins(0, 0, 0, 0);
+
+	popup_->setLayout(new QVBoxLayout());
+	popup_->layout()->addWidget(scrollarea);
+	popup_->layout()->setContentsMargins(0, 0, 0, 0);
+
+	popup_form_ = new QFormLayout(scrollarea_content);
+	popup_form_->setSizeConstraint(QLayout::SetMinAndMaxSize);
+
+	populate_popup_form(popup_, popup_form_);
+}
+
+void Trace::populate_popup_form(QWidget *parent, QFormLayout *form)
+{
+	QLineEdit *const name_edit = new QLineEdit(parent);
+	name_edit->setText(base_->name());
+	connect(name_edit, SIGNAL(textChanged(const QString&)),
+		this, SLOT(on_nameedit_changed(const QString&)));
+	form->addRow(tr("Name"), name_edit);
+
+	add_color_option(parent, form);
+}
+
+void Trace::on_name_changed(const QString &text)
+{
+	/* This event handler is called by SignalBase when the name was changed there */
+	(void)text;
+
+	if (owner_) {
+		owner_->extents_changed(true, false);
+		owner_->row_item_appearance_changed(true, false);
+	}
+}
+
+void Trace::on_color_changed(const QColor &color)
+{
+	/* This event handler is called by SignalBase when the color was changed there */
+	(void)color;
+
+	if (owner_)
+		owner_->row_item_appearance_changed(true, true);
+}
+
+void Trace::on_error_message_changed(const QString &msg)
+{
+	(void)msg;
+
+	if (owner_)
+		owner_->row_item_appearance_changed(false, true);
+}
+
+void Trace::on_popup_closed()
+{
+	popup_ = nullptr;
+	popup_form_ = nullptr;
+}
+
+void Trace::on_nameedit_changed(const QString &name)
+{
+	/* This event handler notifies SignalBase that the name changed */
+	base_->set_name(name);
+}
+
+void Trace::on_coloredit_changed(const QColor &color)
+{
+	/* This event handler notifies SignalBase that the color changed */
+	base_->set_color(color);
+}
+
+void Trace::on_create_marker_here() const
+{
+	View *view = owner_->view();
+	assert(view);
+
+	const Ruler *ruler = view->ruler();
+	QPoint p = ruler->mapFrom(view, QPoint(context_menu_x_pos_, 0));
+
+	view->add_flag(ruler->get_absolute_time_from_x_pos(p.x()));
+}
+QPoint Trace::get_position()
+{
+	return pos_;
+}
+void Trace::on_create_measure_here()
+{
+	View *view = owner_->view();
+	assert(view);
+
+	const Ruler *ruler = view->ruler();
+	pos_ = ruler->mapFrom(view, QPoint(context_menu_x_pos_, context_menu_y_pos_));
+
+}
+
+
+} // namespace trace
+} // namespace views
+} // namespace pv

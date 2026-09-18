@@ -1,0 +1,10 @@
+[Desktop Entry]
+# Creative Commons CC0 1.0 Universal (CC0-1.0, Public Domain Dedication).
+Name=U3LogicAnalyzer
+GenericName=Logic analyzer, oscilloscope and MSO GUI
+Categories=Development;Electronics;
+Comment=Control your logic analyzer, oscilloscope, or MSO
+Exec=LogicAnalyzer
+Icon=pulseview
+Type=Application
+MimeType=application/vnd.sigrok.session;
