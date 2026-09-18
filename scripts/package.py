@@ -195,7 +195,10 @@ def package_windows(bundle: Path, prefix: Path, build_dir: Path) -> Path:
     resources(prefix, bundle)
     imports = run([tool("objdump"), "-p", program])
     if re.search(r"DLL Name:\s*(?:lib)?Qt[56]", imports, re.IGNORECASE):
+        # 本程序使用 QWidget 光栅绘制；MSYS2 不提供 Qt 官方包假定存在的 ANGLE。
+        # 关闭可选图形后端的自动部署，真实 DLL 导入仍由后续递归扫描严格检查。
         run([tool("windeployqt"), "--release", "--no-translations", "--compiler-runtime",
+             "--no-angle", "--no-opengl-sw",
              "--dir", bundle, program])
         if not (bundle / "platforms/qwindows.dll").is_file():
             raise RuntimeError("windeployqt 未部署 Windows 平台插件")
