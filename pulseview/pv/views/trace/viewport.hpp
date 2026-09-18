@@ -51,7 +51,8 @@ class Viewport : public ViewWidget, public GlobalSettingsInterface
 	Q_OBJECT
 
 Q_SIGNALS:
-	add_rule_flag(QMouseEvent *);
+	/** @brief 根据鼠标位置请求在标尺上添加标记。 */
+	void add_rule_flag(QMouseEvent *event);
 
 public:
 	explicit Viewport(View &parent);

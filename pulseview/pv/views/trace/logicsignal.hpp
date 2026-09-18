@@ -107,7 +107,8 @@ public:
 	 */
 	virtual vector<data::LogicSegment::EdgePair> get_nearest_level_changes(uint64_t sample_pos);
 
-	set_none_trigger();
+	/** @brief 清除当前通道的触发条件。 */
+	void set_none_trigger();
 	int signal_height();
 	shared_ptr<pv::data::LogicSegment> get_logic_segment_to_paint() const override;
 Q_SIGNALS:

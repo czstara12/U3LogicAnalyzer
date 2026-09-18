@@ -197,7 +197,7 @@ void LogicSignal::restore_settings(std::map<QString, QVariant> settings)
 	}
 }
 
-void LogicSignal::on_set_none_trigger()
+void LogicSignal::set_none_trigger()
 {
 	for (auto& trigger : trigger_selected_map_){
 		if (trigger.first == "none")
@@ -207,6 +207,11 @@ void LogicSignal::on_set_none_trigger()
 	}
 	trigger_match_ = nullptr;
 	modify_trigger();
+}
+
+void LogicSignal::on_set_none_trigger()
+{
+	set_none_trigger();
 }
 
 pair<int, int> LogicSignal::v_extents() const
