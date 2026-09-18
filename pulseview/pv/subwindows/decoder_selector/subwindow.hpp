@@ -92,8 +92,11 @@ class QCustomSortFilterProxyModel : public QSortFilterProxyModel
 protected:
 	bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const;
 	bool lessThan(const QModelIndex &left, const QModelIndex &right) const override {
-		const char* str = left.data().toString().toStdString().c_str();
-		const char* str_1 = right.data().toString().toStdString().c_str();
+		// 保留字符串对象，使比较期间的字符指针始终有效。
+		const auto left_text = left.data().toString().toStdString();
+		const auto right_text = right.data().toString().toStdString();
+		const char* str = left_text.c_str();
+		const char* str_1 = right_text.c_str();
 		if (strcmp(str, "UART") == 0 || strcmp(str, "SPI") == 0 || strcmp(str, "I²C") == 0 || strcmp(str, "USB PD") == 0 || 
 			strcmp(str_1, "UART") == 0 || strcmp(str_1, "SPI") == 0 || strcmp(str_1, "I²C") == 0 || strcmp(str_1, "USB PD") == 0 ){
 			return false;
