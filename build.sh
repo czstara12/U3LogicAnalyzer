@@ -70,7 +70,8 @@ build_component() {
     shift 2
     echo "===== 编译 $name ====="
     cmake -S "$SCRIPT_DIR/$source" -B "$BUILD_DIR/$name" "${COMMON[@]}" "$@"
-    cmake --build "$BUILD_DIR/$name" "${BUILD_FLAGS[@]}"
+    # 收集同一组件中的全部独立编译错误，便于一次修复跨平台差异。
+    cmake --build "$BUILD_DIR/$name" "${BUILD_FLAGS[@]}" -- -k 0
     cmake --install "$BUILD_DIR/$name"
 }
 build_component libsigrok libsigrok_build

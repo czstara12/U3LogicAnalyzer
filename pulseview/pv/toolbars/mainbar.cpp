@@ -1937,7 +1937,7 @@ namespace pv
 			}
 			hot_plug_listen_ = true;
 			usleep(10000);
-			t_hot_plug = std::thread(hot_plug_listen, this);
+			t_hot_plug = std::thread(&MainBar::hot_plug_listen, this);
 		}
 
 		void MainBar::hot_plug_stop()
