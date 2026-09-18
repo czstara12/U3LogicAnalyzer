@@ -8,6 +8,7 @@ Qt 平台插件或 Python 标准库都会使打包失败，避免发布无法启
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -269,27 +270,62 @@ def package_linux(bundle: Path, prefix: Path, build_dir: Path) -> Path:
     return launcher
 
 
+@lru_cache(maxsize=None)
 def macho_rpaths(binary: Path) -> list[str]:
     """@brief 读取 Mach-O 的 LC_RPATH，供运行库解析使用。"""
     output = run([tool("otool"), "-l", binary])
     return re.findall(r"cmd LC_RPATH\s+cmdsize \d+\s+path (.+?) \(offset", output)
 
 
+@lru_cache(maxsize=None)
+def macho_uuids(binary: Path) -> tuple[str, ...]:
+    """@brief 缓存 Mach-O UUID；修改加载路径和签名不会改变链接器 UUID。"""
+    return tuple(sorted(re.findall(r"\buuid ([A-Fa-f0-9-]+)",
+                                   run([tool("otool"), "-l", binary]))))
+
+
 def same_macho_image(source: Path, deployed: Path) -> bool:
     """@brief 用链接器 UUID 识别已被部署工具重定位的同一动态库。"""
-    source_ids = re.findall(r"\buuid ([A-Fa-f0-9-]+)", run([tool("otool"), "-l", source]))
-    deployed_ids = re.findall(r"\buuid ([A-Fa-f0-9-]+)", run([tool("otool"), "-l", deployed]))
-    return bool(source_ids) and sorted(source_ids) == sorted(deployed_ids)
+    source_ids = macho_uuids(source)
+    return bool(source_ids) and source_ids == macho_uuids(deployed)
 
 
-def macos_dependencies(app: Path, prefix: Path) -> None:
+def macos_library_paths(prefix: Path) -> list[Path]:
+    """@brief 收集构建前缀、Qt、Python 和 Homebrew 各组件的原始库目录。"""
+    candidates = [prefix / "lib", Path(sysconfig.get_config_var("LIBDIR") or sys.base_prefix),
+                  Path(sys.base_prefix), Path(sysconfig.get_config_var("DESTSHARED") or sys.base_prefix),
+                  Path(run([tool("qmake"), "-query", "QT_INSTALL_LIBS"]).strip())]
+    if shutil.which("brew"):
+        brew_prefix = Path(run([tool("brew"), "--prefix"]).strip())
+        candidates.extend([brew_prefix / "lib", brew_prefix / "Frameworks"])
+        # keg-only 组件不一定链接到 Homebrew/lib，例如独立版本的 Python 和 OpenSSL。
+        candidates.extend(sorted((brew_prefix / "opt").glob("*/lib")))
+    return list(dict.fromkeys(path.resolve() for path in candidates if path.is_dir()))
+
+
+def macos_dependencies(app: Path, prefix: Path, original_app: Path) -> None:
     """@brief 递归迁移非系统 dylib，并改成相对加载路径。"""
     frameworks = app / "Contents/Frameworks"
     frameworks.mkdir(exist_ok=True)
     app_executable = app / "Contents/MacOS/LogicAnalyzer"
     exe_rpaths = macho_rpaths(app_executable)
+    search_dirs = macos_library_paths(prefix)
     sources: dict[Path, Path] = {}
-    pending = [(path, path) for path in binary_files(app, "macho")]
+    origins: dict[Path, Path] = {}
+    binaries = [path.resolve() for path in binary_files(app, "macho")]
+    # macdeployqt 已复制并修改部分库；先恢复来源，才能解释其 @loader_path/LC_RPATH。
+    for binary in binaries:
+        relative = binary.relative_to(app.resolve())
+        candidates = [original_app / relative]
+        if binary.is_relative_to(frameworks.resolve()):
+            framework_relative = binary.relative_to(frameworks.resolve())
+            candidates.extend(directory / framework_relative for directory in search_dirs)
+        candidates.extend(directory / binary.name for directory in search_dirs)
+        original = next((path.resolve() for path in candidates if path.is_file()
+                         and same_macho_image(path.resolve(), binary)), binary)
+        origins[binary] = original
+        sources[original] = binary
+    pending = [(path, origins[path]) for path in binaries]
     visited: set[Path] = set()
 
     def expand(value: str, owner: Path) -> Path:
@@ -318,7 +354,8 @@ def macos_dependencies(app: Path, prefix: Path) -> None:
                 tail = dependency[len("@rpath/"):]
                 candidates = [expand(path, owner) / tail for owner in (original, binary)
                               for path in rpaths]
-                candidates += [frameworks / tail, prefix / "lib" / tail]
+                candidates += [frameworks / tail, original.parent / tail]
+                candidates.extend(directory / tail for directory in search_dirs)
             if dependency.startswith("/"):
                 candidates.insert(0, Path(dependency))
             source = next((path.resolve() for path in candidates if path.is_file()), None)
@@ -329,6 +366,7 @@ def macos_dependencies(app: Path, prefix: Path) -> None:
                 raise RuntimeError(f"缺少 Mach-O 依赖：{dependency}（被 {binary} 引用）")
             if source.is_relative_to(app.resolve()):
                 target = source
+                source = origins.get(target, source)
             else:
                 target = sources.get(source)
                 if target is None:
@@ -337,6 +375,7 @@ def macos_dependencies(app: Path, prefix: Path) -> None:
                     if not (target.is_file() and same_macho_image(source, target)):
                         copy_file(source, target)
                     sources[source] = target
+                    origins[target] = source
             replacement = "@loader_path/" + os.path.relpath(target, binary.parent)
             run([tool("install_name_tool"), "-change", dependency, replacement, binary])
             pending.append((target, source))
@@ -366,7 +405,7 @@ def package_macos(bundle: Path, prefix: Path, build_dir: Path) -> Path:
     resources(prefix, resources_dir)
     run([tool("macdeployqt"), app, "-always-overwrite", "-no-strip",
          f"-libpath={prefix / 'lib'}"], timeout=600)
-    macos_dependencies(app, prefix)
+    macos_dependencies(app, prefix, source)
     return app / "Contents/MacOS/LogicAnalyzer"
 
 
