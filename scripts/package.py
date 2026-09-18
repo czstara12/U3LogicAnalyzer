@@ -422,7 +422,11 @@ def smoke_test(program: Path, bundle: Path) -> None:
     # Linux 构建机通常没有显示服务；Windows/macOS 的无窗口检查使用原生插件。
     env["QT_QPA_PLATFORM"] = {"Windows": "windows", "Darwin": "cocoa",
                               "Linux": "offscreen"}[platform.system()]
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if platform.system() == "Darwin":
+        # 由应用自身禁用缓存写入，避免测试环境掩盖已签名资源被修改的问题。
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+    else:
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
     if os.name == "nt":
         system_root = env.get("SystemRoot", "C:/Windows")
         env["PATH"] = os.pathsep.join([str(bundle), str(Path(system_root) / "System32"), system_root])
@@ -493,6 +497,14 @@ def main() -> None:
             run([tool("codesign"), "--force", "--sign", "-", bundle / "LogicAnalyzer.app"])
         if not args.skip_smoke_test:
             smoke_test(program, bundle)
+            if system == "Darwin":
+                app = bundle / "LogicAnalyzer.app"
+                caches = [path for path in app.rglob("*")
+                          if path.name == "__pycache__" or path.suffix in (".pyc", ".pyo")]
+                if caches:
+                    raise RuntimeError(f"启动后签名包中出现 Python 缓存：{caches[:10]}")
+                run([tool("codesign"), "--verify", "--deep", "--strict", app])
+                print("启动后签名验证通过，未生成 Python 缓存。", flush=True)
         target = archive(bundle, output, name, system)
         print(f"已生成发布包：{target}", flush=True)
     finally:

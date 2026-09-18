@@ -194,6 +194,10 @@ using namespace std;
  */
 static void prepare_decode_environment()
 {
+	// 应用包签名后不能新增 Python 缓存，正常启动也必须保持资源完整。
+#ifdef Q_OS_MAC
+	qputenv("PYTHONDONTWRITEBYTECODE", "1");
+#endif
 	const QDir app_dir(QCoreApplication::applicationDirPath());
 	if (qEnvironmentVariableIsEmpty("PYTHONHOME")) {
 		QString python_home;
