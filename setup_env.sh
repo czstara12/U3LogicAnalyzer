@@ -20,7 +20,9 @@ case "$(uname -s)" in
         ;;
     Darwin)
         command -v brew >/dev/null || { echo "请先安装 Homebrew。" >&2; exit 1; }
-        brew install cmake ninja pkgconf glib glibmm@2.66 libusb hidapi libzip boost qt@5 python@3.13
+        brew install cmake ninja pkgconf glib glibmm@2.66 libusb hidapi libzip boost qt@5
+        # 构建使用专用前缀，避免覆盖 runner 或用户已有的 Python 命令。
+        brew install --skip-link python@3.13
         ;;
     *) echo "不支持的系统：$(uname -s)" >&2; exit 1 ;;
 esac

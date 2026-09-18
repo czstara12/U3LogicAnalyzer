@@ -47,7 +47,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: 获取源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
@@ -91,7 +91,7 @@ jobs:
           bash build.sh --package --version "$version"
 
       - name: 保存发布包与校验文件
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: package-${{ matrix.artifact }}
           if-no-files-found: error
@@ -111,11 +111,11 @@ jobs:
       contents: write
     steps:
       - name: 获取发布说明
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: 下载全部平台产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: package-*
           merge-multiple: true
