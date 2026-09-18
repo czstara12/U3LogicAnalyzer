@@ -56,11 +56,17 @@ def run(args: list[str | Path], *, env: dict[str, str] | None = None,
 
 def tool(name: str) -> str:
     """@brief 查找必需工具，允许环境变量覆盖 Qt 工具路径。"""
-    candidate = os.environ.get(name.upper()) or shutil.which(name)
+    # MSYS2 为避免 Qt5/Qt6 冲突，使用 windeployqt-qt5 等带版本的命令。
+    names = [f"{name}-qt5", name] if name in ("windeployqt", "macdeployqt", "qmake") else [name]
+    candidate = os.environ.get(name.upper())
     if not candidate:
-        sibling = Path(sys.executable).parent / (name + ".exe" if os.name == "nt" else name)
-        if sibling.is_file():
-            candidate = str(sibling)
+        candidate = next((found for variant in names if (found := shutil.which(variant))), None)
+    if not candidate:
+        for variant in names:
+            sibling = Path(sys.executable).parent / (variant + ".exe" if os.name == "nt" else variant)
+            if sibling.is_file():
+                candidate = str(sibling)
+                break
     if not candidate:
         raise RuntimeError(f"缺少打包工具：{name}")
     return candidate
