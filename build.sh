@@ -60,17 +60,17 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PAT
 export CMAKE_PREFIX_PATH="$PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 COMMON=(-G Ninja "-DCMAKE_INSTALL_PREFIX=$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib
     -DCMAKE_BUILD_TYPE=Release -DDISABLE_WERROR=ON)
-BUILD_FLAGS=()
+BUILD_FLAGS=(--parallel "$JOBS")
 if (( CLEAN )); then
     # 让构建工具重新编译，不递归删除用户目录，兼容 CMake 3.18。
-    BUILD_FLAGS=(--clean-first)
+    BUILD_FLAGS+=(--clean-first)
 fi
 build_component() {
     local source="$1" name="$2"
     shift 2
     echo "===== 编译 $name ====="
     cmake -S "$SCRIPT_DIR/$source" -B "$BUILD_DIR/$name" "${COMMON[@]}" "$@"
-    cmake --build "$BUILD_DIR/$name" "${BUILD_FLAGS[@]}" --parallel "$JOBS"
+    cmake --build "$BUILD_DIR/$name" "${BUILD_FLAGS[@]}"
     cmake --install "$BUILD_DIR/$name"
 }
 build_component libsigrok libsigrok_build
